@@ -20,10 +20,7 @@ The innovation is not a UI widget. It is a **vendor-neutral Context Service** th
 
 ## System architecture
 
-Wide diagrams are in a monospace block so alignment is preserved; on narrow viewports, scroll horizontally inside the block (GitHub and most Markdown viewers enable this automatically).
-
 ```text
-────────────────────────────────────────────────────────────────────────────────
 
  Architecture (backend-centric, framework-agnostic)
 
