@@ -350,6 +350,119 @@ This architecture is intentionally shaped to sit in the **backend protocol + gov
 
 ---
 
+## CopilotKit comparison
+
+[CopilotKit](https://docs.copilotkit.ai/concepts/architecture) is the closest product match for the **UX goal** — an embedded agent panel that shares situational awareness with the enterprise UI. It solves a **different architectural problem** than this Context Service.
+
+### CopilotKit's three-layer stack
+
+CopilotKit connects **frontend → Copilot Runtime → agent backend** over the open [AG-UI protocol](https://docs.ag-ui.com/concepts/state) (SSE event stream):
+
+| Layer | Role |
+|-------|------|
+| **Frontend** | React/Vue/Angular SDK; `useAgent`, `useAgentContext`, `CopilotSidebar` |
+| **Copilot Runtime** | Request handler in your app server (Next.js, Express, Hono); auth, middleware, AG-UI proxy |
+| **Agent backend** | Built-in Agent, LangGraph, Mastra, or any AG-UI-compatible agent |
+
+There is **no separate traditional app backend peer**. Domain APIs (orders, CRM, ERP) sit beside this path — not through a governed Context Service.
+
+### How CopilotKit shares state (two channels)
+
+**Channel A — Shared state (bidirectional, agent-owned)**
+
+- One JSON **agent execution state** object both UI and agent read/write.
+- Frontend: `useAgent()` → `agent.state` (read), `agent.setState()` (write).
+- Backend: LangGraph nodes/tools update state; wire format is AG-UI `STATE_SNAPSHOT` + `STATE_DELTA` (JSON Patch).
+- **Owner of truth:** the agent backend, not the domain app backend.
+
+**Channel B — Agent read-only context (UI → agent only)**
+
+- Frontend: `useAgentContext({ description, value })` publishes UI-owned values (user, selected record, route).
+- Runtime middleware injects these into the model message history every turn.
+- Agent cannot write back. Values typically come from frontend state or fetches against your domain API.
+
+Sources: [Shared State](https://docs.copilotkit.ai/shared-state), [Agent Read-Only Context](https://docs.copilotkit.ai/shared-state/agent-readonly), [Architecture](https://docs.copilotkit.ai/concepts/architecture)
+
+### Side-by-side comparison
+
+| Dimension | CopilotKit | Context Service (this design) |
+|-----------|------------|-------------------------------|
+| Primary problem | Connect **frontend ↔ agent** with real-time shared state | Connect **app backend ↔ agent backend** with governed interchange |
+| Center of gravity | Agent execution state + UI reactivity | Canonical domain context store |
+| State owner | **Agent** owns shared state | **Context Service** owns snapshots; app owns commits |
+| Domain record truth | Your domain APIs (orthogonal) | App-published snapshots are the authoritative read model |
+| Agent writes | Can mutate shared state; tools may hit domain APIs directly | **Proposals only**; app backend **commits** |
+| UI context → agent | `useAgentContext` → prompt injection | App publishes `ContextSnapshot` → agent reads via API |
+| Versioning | LangGraph checkpoints; Enterprise Intelligence thread history | Explicit `version` + `basedOnSnapshotId` stale rejection |
+| RBAC / policy | Runtime auth + tool design; not embedded in state artifact | Policy **embedded in snapshot envelope** |
+| Audit lineage | Thread event replay (Enterprise Intelligence) | session → snapshot → proposal → commit chain |
+| Framework lock-in | React-first SDK; AG-UI wire protocol is open | HTTP/gRPC API — any frontend, any agent runtime |
+
+### Architecture shapes compared
+
+**CopilotKit (default integration path):**
+
+```text
+ Frontend                         Copilot Runtime              Agent backend
+ ┌──────────────┐                  ┌──────────────┐            ┌──────────────┐
+ │ Enterprise   │  useAgent()      │ Auth, proxy, │   AG-UI    │ LangGraph /  │
+ │ UI + Panel   │◄────────────────►│ middleware   │◄──────────►│ Built-in     │
+ └──────┬───────┘  AG-UI SSE       └──────────────┘            └──────────────┘
+        │ fetch domain data
+        ▼
+ ┌──────────────┐
+ │ Domain APIs  │◄── agent tools (direct API calls)
+ └──────────────┘
+```
+
+**Context Service (this design):**
+
+```text
+ Enterprise UI (any web)                    Agent panel (any web)
+        │                                           │
+        ▼                                           ▼
+ App backend ◄────────► Context Service ◄────────► Agent backend
+ (publish snapshots,   (snapshots, proposals,     (read snapshots,
+  commit mutations)      audit, RBAC)              write proposals)
+```
+
+**Core difference:** CopilotKit syncs **agent state to UI**. Context Service syncs **domain context between two backends** with governance in the middle.
+
+### What CopilotKit covers vs gaps
+
+| Goal | CopilotKit | Gap for enterprise backend governance |
+|------|------------|---------------------------------------|
+| Agent panel beside enterprise UI | Yes | — |
+| Agent sees what user is viewing | Yes (`useAgentContext`) | Injected into prompt, not versioned snapshot API |
+| Real-time UI updates as agent works | Yes (`STATE_DELTA` streaming) | Agent-owned state, not domain authority |
+| Agent proposes, human approves | Partial (tool-level HITL) | No snapshot-anchored proposal/commit |
+| App backend and agent as equal peers | No | Runtime brokers frontend↔agent only |
+| Authoritative domain record via context layer | No | Tools/APIs wired ad hoc |
+
+### Hybrid integration (recommended if adopting CopilotKit for UI)
+
+Use CopilotKit for **presentation transport**; use Context Service for **domain authority**:
+
+| Layer | Technology | Responsibility |
+|-------|------------|----------------|
+| Frontend transport | CopilotKit + AG-UI | Panel, streaming, `useAgentContext` for lightweight UI hints |
+| Backend truth | Context Service | Snapshots, proposals, commits, RBAC, audit |
+| Agent tools | MCP | `getContextSnapshot()`, `submitProposal()` against Context Service |
+| App backend | Your domain APIs | Publish snapshots on navigation; commit on user approval |
+
+CopilotKit handles **presentation sync**; Context Service handles **enterprise semantics**. This avoids reimplementing AG-UI SSE/state-delta while preserving differentiated backend IP.
+
+### Strategic takeaway
+
+| Question | Answer |
+|----------|--------|
+| Is CopilotKit close in UX? | **Yes** — shared state, embedded panel, UI-aware agent |
+| Is it the same architecture? | **No** — agent-centric state sync, not dual-backend governed interchange |
+| Overlap estimate | ~60% of surface experience; ~20% of backend governance model |
+| Build vs compose | **Compose:** CopilotKit/AG-UI for wire-up + Context Service for enterprise backend semantics |
+
+---
+
 ## Patent angles (drafting directions — not legal advice)
 
 Consult patent counsel before filing. The following are **technical angles** where specification and claims may be strongest, based on differentiation from known filings:
@@ -416,4 +529,4 @@ Consult patent counsel before filing. The following are **technical angles** whe
 
 ---
 
-*Document version: 1.0 — 2026-08-23*
+*Document version: 1.1 — 2026-08-23 (added CopilotKit comparison)*
