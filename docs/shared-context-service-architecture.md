@@ -20,58 +20,69 @@ The innovation is not a UI widget. It is a **vendor-neutral Context Service** th
 
 ## System architecture
 
-```mermaid
-flowchart TB
-    subgraph Clients["Presentation layer (any web stack)"]
-        WebApp["Enterprise UI<br/>forms, tables, dashboards"]
-        AgentUI["Embedded agent surface<br/>panel, cards, chat"]
-    end
+Wide diagrams are in a monospace block so alignment is preserved; on narrow viewports, scroll horizontally inside the block (GitHub and most Markdown viewers enable this automatically).
 
-    subgraph AppBackend["Traditional app backend"]
-        AppAPI["Domain APIs & workflows"]
-        AppPublisher["Context Publisher"]
-        AppConsumer["Context Consumer"]
-    end
+```text
+────────────────────────────────────────────────────────────────────────────────
 
-    subgraph ContextLayer["Shared Context Layer — core IP"]
-        CS["Context Service"]
-        Store["Context Store<br/>versioned snapshots + deltas"]
-        Schema["Schema Registry<br/>typed entities & scopes"]
-        ACL["RBAC / tenancy / field policy"]
-        Audit["Provenance & audit log"]
-        Bus["Context Event Bus<br/>pub/sub"]
-    end
+ Architecture (backend-centric, framework-agnostic)
 
-    subgraph AgentBackend["AI agent backend"]
-        AgentRT["Agent runtime / orchestrator"]
-        AgentReader["Context Reader"]
-        AgentWriter["Context Writer<br/>proposals only"]
-        Tools["Tool executor<br/>MCP or native"]
-        Gate["Approval gate"]
-    end
-
-    WebApp --> AppAPI
-    AgentUI --> AgentRT
-    AppAPI --> AppPublisher
-    AppPublisher --> CS
-    AppConsumer --> CS
-    CS --> Store
-    CS --> Schema
-    CS --> ACL
-    CS --> Audit
-    CS --> Bus
-
-    AgentReader --> CS
-    AgentWriter --> CS
-    AgentRT --> AgentReader
-    AgentRT --> AgentWriter
-    AgentRT --> Tools
-    Gate --> Tools
-    Tools --> AppAPI
-
-    Bus --> AppConsumer
-    Bus --> AgentRT
+                                           ┌ Any web frontend ─────────────────────────────────────┐
+                                           │┌────────────────────────┐   ┌────────────────────────┐│
+                                           ││ Enterprise UI (React / │   │ Embedded agent surface ││
+                                           ││  Vue / Angular / Web   │   │  (panel, cards, chat)  │├──────────────────────────────────────────┐
+                                           ││      Components)       │   └────────────────────────┘│                                          │
+                                           │└────────────────────────┘                             │                                          │
+                                           └───────────────────────────┬───────────────────────────┘                                          │
+                                                                       │                                                                      │
+                                                                       ▼                                                                      │
+                                             ┌ Traditional app backend ─────────────────────────┐                                             │
+                                             │ ┌─────────────────────────┐  ┌──────────────────┐│                                             │
+                                             │ │ Domain APIs & workflows │  │ Context Consumer ││                                             │
+                                             │ └────────────┬────────────┘  └──────────────────┘│                                             │
+                                             │              │                                   │                                             │
+                                             │              ▼                                   │◄────────────────────────────────────────────┼┐
+                                             │    ┌───────────────────┐                         │                                             ││
+                                             │    │ Context Publisher │                         │                                             ││
+                                             │    └───────────────────┘                         │                                             ││
+                                             └─────────────────────────┬────────────────────────┘                                             ││
+                                                                       │                                                                      ││
+                                                                       ▼                                                                      ││
+ ┌ Shared Context Layer — YOUR CORE ────────────────────────────────────────────────────────────────────────────────────────────────────────┐ ││
+ │                                                               ┌─────────────────┐                                                        │ ││
+ │                                                               │ Context Service │                                                        │ ││
+ │                                                               └────────┬┬───────┘                                                        │ ││
+ │              ┌──────────────────────────────┬──────────────────────────┴┼──────────────────────────┬──────────────────────────┐          │ ││
+ │              ▼                              ▼                           ▼                          ▼                          ▼          ├◄┼┼┐
+ │┌──────────────────────────┐   ┌──────────────────────────┐   ┌────────────────────┐   ┌────────────────────────┐    ┌───────────────────┐│ │││
+ ││ Context Store (versioned │   │ Context Schema Registry  │   │  RBAC / tenancy /  │   │ Provenance & audit log │    │ Context Event Bus ││ │││
+ ││   snapshots + deltas)    │   │ (typed entities, scopes) │   │ field-level policy │   └────────────────────────┘    │     (pub/sub)     ││ │││
+ │└──────────────────────────┘   └──────────────────────────┘   └────────────────────┘                                 └───────────────────┘│ │││
+ └─────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────┘ │││
+                                                                       │                                                                      │││
+                                                                       ▼                                                                      │││
+                                   ┌ AI agent backend ────────────────────────────────────────────────────┐                                   │││
+                                   │                       ┌─────────────────┐       ┌───────────────┐    │                                   │││
+                                   │                       │ Agent runtime / │       │ Approval gate │    │                                   │││
+                                   │                       │  orchestrator   │       └───────┬───────┘    │                                   │││
+                                   │                       └───────┬┬────────┘               │            │                                   │││
+                                   │         ┌─────────────────────┼┴────────────────────────┤            │                                   │││
+                                   │         ▼                     ▼                         ▼            ├◄──────────────────────────────────┴┴┘
+                                   │┌────────────────┐   ┌──────────────────┐    ┌───────────────────────┐│
+                                   ││ Context Reader │   │  Context Writer  │    │ Tool executor (MCP or ││
+                                   │└────────────────┘   │ (proposals only) │    │        native)        ││
+                                   │                     └──────────────────┘    └───────────────────────┘│
+                                   └──────────────────────────────────────────────────────────────────────┘
 ```
+
+### Typical flow
+
+ 1. User opens Order #12345 → app backend publishes ContextSnapshot { subject: order/12345, fields, user, tenant, intent }.
+ 2. Agent backend subscribes → sees the same snapshot the app backend authored.
+ 3. Agent proposes ActionProposal { type: update_field, diff, rationale } → writes to context as proposal, not direct mutation.
+ 4. User approves → app backend (or gated executor) applies the change → new snapshot version published → both sides stay in sync.
+
+---
 
 ### Layer responsibilities
 
